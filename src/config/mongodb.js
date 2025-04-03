@@ -4,6 +4,7 @@ import { env } from '~/config/environment'
 const password = encodeURIComponent(env.PASS_MONGO)
 const mongoUri = `${env.MONGODB_URI_BEFORE + password + env.MONGODB_URI_AFTER}`
 
+// mongodb node driver
 import { MongoClient, ServerApiVersion } from 'mongodb'
 
 // Khởi tạo 1 đối tượng ban đầu là null (vì chưa connect)

@@ -1,18 +1,27 @@
 /* eslint-disable no-console */
 import express from 'express'
 import exitHook from 'async-exit-hook'
+import cors from 'cors'
 
 import { env } from '~/config/environment'
-
-import { GET_DB, CONNECT_DB, CLOSE_DB } from '~/config/mongodb'
+import { CONNECT_DB, CLOSE_DB } from '~/config/mongodb'
+import { APIs_V1 } from '~/routes/v1'
+import { errorHandlingMiddleware } from '~/middlewares/errorHandlingMiddleware'
+import { corsOptions } from '~/config/cors'
 
 const START_SEVER = () => {
   const app = express()
 
-  app.get('/', async (req, res) => {
-    console.log(await GET_DB().listCollections().toArray())
-    res.end('<h1>Hello World!</h1>')
-  })
+  app.use(cors(corsOptions))
+
+  // Enable req.body json data
+  app.use(express.json())
+  // app.use(express.urlencoded())
+
+  app.use('/v1', APIs_V1)
+
+  // Middleware sử lý lỗi tập trung
+  app.use(errorHandlingMiddleware)
 
   app.listen(env.APP_PORT, env.APP_HOST, () => {
     // eslint-disable-next-line no-console

@@ -42,11 +42,11 @@ const createNew = async (data) => {
   }
 }
 
-const findOneById = async (id) => {
+const findOneById = async (boardId) => {
   try {
     return await GET_DB()
       .collection(BOARD_COLLECTION_NAME)
-      .findOne({ _id: new ObjectId(id) })
+      .findOne({ _id: new ObjectId(boardId) })
   } catch (error) {
     throw new Error(error)
   }
@@ -90,6 +90,7 @@ const getDetails = async (boardId) => {
 }
 
 // Push columnId -> array columnOrderIds
+//dùng toán tử $push để đẩy 1 phần tử vào cuối mang
 const pushColumnOrderIds = async (column) => {
   try {
     const result = await GET_DB()
@@ -116,6 +117,12 @@ const update = async (boardId, updateData) => {
         delete updateData[fieldName]
       }
     })
+
+    //Đối với datas liên quan đến ObjectID thì biến đổi ở đây
+    if (updateData.columnOrderIds) {
+      updateData.columnOrderIds = updateData.columnOrderIds.map((_id) => new ObjectId(_id))
+    }
+
     const result = await GET_DB()
       .collection(BOARD_COLLECTION_NAME)
       .findOneAndUpdate(
@@ -132,6 +139,24 @@ const update = async (boardId, updateData) => {
   }
 }
 
+//dùng toán tử $pull để lấy 1 phần tử ra khỏi mảng
+const pullColumnOrderIds = async (column) => {
+  try {
+    const result = await GET_DB()
+      .collection(BOARD_COLLECTION_NAME)
+      .findOneAndUpdate(
+        {
+          _id: new ObjectId(column.boardId),
+        },
+        { $pull: { columnOrderIds: new ObjectId(column._id) } },
+        { returnDocument: 'after' },
+      )
+
+    return result
+  } catch (error) {
+    throw new Error(error)
+  }
+}
 export const boardModel = {
   BOARD_COLLECTION_NAME,
   BOARD_COLLECTION_SCHEMA,
@@ -140,4 +165,5 @@ export const boardModel = {
   getDetails,
   pushColumnOrderIds,
   update,
+  pullColumnOrderIds,
 }

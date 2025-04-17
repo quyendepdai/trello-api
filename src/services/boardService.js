@@ -1,6 +1,10 @@
 /* eslint-disable no-useless-catch */
 import { slugify } from '~/utils/formatters'
+
 import { boardModel } from '~/models/boardModel'
+import { columnModel } from '~/models/columnModel'
+import { cardModel } from '~/models/cardModel'
+
 import ApiError from '~/utils/ApiError'
 import { StatusCodes } from 'http-status-codes'
 
@@ -73,4 +77,30 @@ const update = async (boardId, reqBody) => {
   }
 }
 
-export const boardService = { createNew, getDetails, update }
+const moveCardToDifferentColumn = async (reqBody) => {
+  try {
+    // B1: update cardOrderIds của column ban đầu chứa nó (xóa _id của card đó ra khỏi column)
+    await columnModel.update(reqBody.prevColumnId, {
+      cardOrderIds: reqBody.prevCardOrderIds,
+      updatedAt: Date.now(),
+    })
+
+    // B2: update cardOrderIds của column đích chứa nó (thêm _id của card đó vào column)
+    await columnModel.update(reqBody.nextColumnId, {
+      cardOrderIds: reqBody.nextCardOrderIds,
+      updatedAt: Date.now(),
+    })
+
+    // B3: update lại trường columnId của card đã kéo
+    await cardModel.update(reqBody.currentCardId, {
+      columnId: reqBody.nextColumnId,
+      updatedAt: Date.now(),
+    })
+
+    return { updatedResult: 'Successfully ' }
+  } catch (error) {
+    throw error
+  }
+}
+
+export const boardService = { createNew, getDetails, update, moveCardToDifferentColumn }

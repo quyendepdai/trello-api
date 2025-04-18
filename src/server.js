@@ -23,10 +23,17 @@ const START_SEVER = () => {
   // Middleware sử lý lỗi tập trung
   app.use(errorHandlingMiddleware)
 
-  app.listen(env.APP_PORT, env.APP_HOST, () => {
-    // eslint-disable-next-line no-console
-    console.log(`Hello, I am running at http://${env.APP_HOST}:${env.APP_PORT}/`)
-  })
+  if (env.BUILD_MODE === 'production') {
+    app.listen(process.env.PORT, () => {
+      // eslint-disable-next-line no-console
+      console.log(`Production: Hello, I am running at PORT: ${env.APP_PORT}/`)
+    })
+  } else {
+    app.listen(env.APP_PORT, env.APP_HOST, () => {
+      // eslint-disable-next-line no-console
+      console.log(`Local Dev: Hello, I am running at http://${env.APP_HOST}:${env.APP_PORT}/`)
+    })
+  }
 
   // Close connect db when exit sever
   exitHook(() => {

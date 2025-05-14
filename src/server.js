@@ -1,3 +1,4 @@
+/* eslint-disable no-unused-vars */
 /* eslint-disable no-console */
 import express from 'express'
 import exitHook from 'async-exit-hook'
@@ -9,8 +10,23 @@ import { APIs_V1 } from '~/routes/v1'
 import { errorHandlingMiddleware } from '~/middlewares/errorHandlingMiddleware'
 import { corsOptions } from '~/config/cors'
 
+import cookieParser from 'cookie-parser'
+
+import http from 'http'
+import socketIo from 'socket.io'
+import { inviteUserToBoardSocket } from './sockets/inviteUserToBoardSocket'
+
 const START_SEVER = () => {
   const app = express()
+
+  // config: fix Cache from disk cua ExpressJs
+  app.use((req, res, next) => {
+    res.set('Cache-Control', 'no-store')
+    next()
+  })
+
+  // config cookie parser
+  app.use(cookieParser())
 
   app.use(cors(corsOptions))
 
@@ -23,13 +39,25 @@ const START_SEVER = () => {
   // Middleware sử lý lỗi tập trung
   app.use(errorHandlingMiddleware)
 
+  // Tao 1 server moi boc App cua express de lam real-time voi socket.id
+  const server = http.createServer(app)
+  // Khoi tao bien io voi server va cors
+  const io = socketIo(server, { cors: corsOptions })
+  io.on('connection', (socket) => {
+    //Goi cac socket tuy theo feature o day
+    inviteUserToBoardSocket(socket)
+
+    //...
+  })
+
   if (env.BUILD_MODE === 'production') {
-    app.listen(process.env.PORT, () => {
+    // dung server.listen thay vi app.listen vi luc nay server da bao gom express app va da config socket.io
+    server.listen(process.env.PORT, () => {
       // eslint-disable-next-line no-console
       console.log(`Production: Hello, I am running at PORT: ${env.APP_PORT}/`)
     })
   } else {
-    app.listen(env.APP_PORT, env.APP_HOST, () => {
+    server.listen(env.APP_PORT, env.APP_HOST, () => {
       // eslint-disable-next-line no-console
       console.log(`Local Dev: Hello, I am running at http://${env.APP_HOST}:${env.APP_PORT}/`)
     })

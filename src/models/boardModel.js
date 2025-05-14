@@ -5,6 +5,8 @@ import { OBJECT_ID_RULE, OBJECT_ID_RULE_MESSAGE } from '~/utils/validators'
 import { BOARD_TYPE } from '~/utils/constants'
 import { columnModel } from './columnModel'
 import { cardModel } from './cardModel'
+import { pagingSkipValue } from '~/utils/algorithms'
+import { userModel } from './userModel'
 
 //Define Collection (Name & Schema)
 
@@ -20,6 +22,15 @@ const BOARD_COLLECTION_SCHEMA = Joi.object({
     .items(Joi.string().pattern(OBJECT_ID_RULE).message(OBJECT_ID_RULE_MESSAGE))
     .default([]),
 
+  // nhung admin cua board
+  ownerIds: Joi.array()
+    .items(Joi.string().pattern(OBJECT_ID_RULE).message(OBJECT_ID_RULE_MESSAGE))
+    .default([]),
+  // nhung thanh vien da join board
+  memberIds: Joi.array()
+    .items(Joi.string().pattern(OBJECT_ID_RULE).message(OBJECT_ID_RULE_MESSAGE))
+    .default([]),
+
   createdAt: Joi.date().timestamp('javascript').default(Date.now),
   updatedAt: Joi.date().timestamp('javascript').default(null),
   _destroy: Joi.boolean().default(false),
@@ -32,11 +43,16 @@ const validateBeforeCreate = async (data) => {
   return await BOARD_COLLECTION_SCHEMA.validateAsync(data, { abortEarly: false })
 }
 
-const createNew = async (data) => {
+const createNew = async (userId, newBoard) => {
   try {
-    const validData = await validateBeforeCreate(data)
+    const validData = await validateBeforeCreate(newBoard)
 
-    return await GET_DB().collection(BOARD_COLLECTION_NAME).insertOne(validData)
+    const newBoardToAdd = {
+      ...validData,
+      ownerIds: [new ObjectId(userId)],
+    }
+
+    return await GET_DB().collection(BOARD_COLLECTION_NAME).insertOne(newBoardToAdd)
   } catch (error) {
     throw new Error(error)
   }
@@ -53,16 +69,24 @@ const findOneById = async (boardId) => {
 }
 
 // aggregate query tổng hợp (join table)
-const getDetails = async (boardId) => {
+const getDetails = async (userId, boardId) => {
   try {
+    const queryConditions = [
+      { _id: new ObjectId(boardId) },
+      { _destroy: false },
+      {
+        $or: [
+          { ownerIds: { $all: [new ObjectId(userId)] } },
+          { memberIds: { $all: [new ObjectId(userId)] } },
+        ],
+      },
+    ]
+
     const result = await GET_DB()
       .collection(BOARD_COLLECTION_NAME)
       .aggregate([
         {
-          $match: {
-            _id: new ObjectId(boardId),
-            _destroy: false,
-          },
+          $match: { $and: queryConditions },
         },
         {
           $lookup: {
@@ -78,6 +102,25 @@ const getDetails = async (boardId) => {
             localField: '_id',
             foreignField: 'boardId',
             as: 'cards',
+          },
+        },
+        {
+          $lookup: {
+            from: userModel.USER_COLLECTION_NAME,
+            localField: 'ownerIds',
+            foreignField: '_id',
+            as: 'owners',
+            // chỉ định field ko trả về
+            pipeline: [{ $project: { password: 0, verifyToken: 0 } }],
+          },
+        },
+        {
+          $lookup: {
+            from: userModel.USER_COLLECTION_NAME,
+            localField: 'memberIds',
+            foreignField: '_id',
+            as: 'members',
+            pipeline: [{ $project: { password: 0, verifyToken: 0 } }],
           },
         },
       ])
@@ -102,7 +145,6 @@ const pushColumnOrderIds = async (column) => {
         { $push: { columnOrderIds: new ObjectId(column._id) } },
         { returnDocument: 'after' },
       )
-
     return result
   } catch (error) {
     throw new Error(error)
@@ -157,6 +199,84 @@ const pullColumnOrderIds = async (column) => {
     throw new Error(error)
   }
 }
+
+const getBoards = async (userId, page, itemsPerPage, queryFilters) => {
+  try {
+    const queryConditions = [
+      { _destroy: false }, // DK 01: Boards chua bi xoa
+      // DK 02: userId dang thuc hien request phai la thanh vien ( thong qua 2 mang ownerIds hoac memberIds) su dung toan tu $all cua mongoDb
+      {
+        $or: [
+          { ownerIds: { $all: [new ObjectId(userId)] } },
+          { memberIds: { $all: [new ObjectId(userId)] } },
+        ],
+      },
+    ]
+
+    // xu ly query filter cho tung case search board
+    // case search title
+    if (queryFilters) {
+      Object.keys(queryFilters).forEach((key) => {
+        // co phan biet chu hoa chu thuong
+        // queryConditions.push({ [key]: { $regex: queryFilters[key] } })
+
+        // ko phan biet
+        queryConditions.push({ [key]: { $regex: new RegExp(queryFilters[key], 'i') } })
+      })
+    }
+
+    const result = await GET_DB()
+      .collection(BOARD_COLLECTION_NAME)
+      .aggregate(
+        [
+          { $match: { $and: queryConditions } }, // DK 01 & DK 02
+          { $sort: { title: 1 } },
+          // $facet de su li nhieu luong trong 1 query
+          {
+            $facet: {
+              // luong thu 01: Query Boards
+              queryBoards: [
+                { $skip: pagingSkipValue(page, itemsPerPage) },
+                { $limit: itemsPerPage },
+              ],
+              // 02: dem so luong Boards va tra ve bien countedAllBoards
+              queryTotalBoards: [{ $count: 'countedAllBoards' }],
+            },
+          },
+        ],
+        // fig bug sort chu B dung trc a
+        { collation: { locale: 'en' } },
+      )
+      .toArray()
+
+    const res = result[0]
+
+    return {
+      boards: res.queryBoards || [],
+      totalBoards: res.queryTotalBoards[0]?.countedAllBoards || 0,
+    }
+  } catch (error) {
+    throw new Error(error)
+  }
+}
+
+const pushMemberIds = async (boardId, userId) => {
+  try {
+    const result = await GET_DB()
+      .collection(BOARD_COLLECTION_NAME)
+      .findOneAndUpdate(
+        {
+          _id: new ObjectId(boardId),
+        },
+        { $push: { memberIds: new ObjectId(userId) } },
+        { returnDocument: 'after' },
+      )
+    return result
+  } catch (error) {
+    throw new Error(error)
+  }
+}
+
 export const boardModel = {
   BOARD_COLLECTION_NAME,
   BOARD_COLLECTION_SCHEMA,
@@ -166,4 +286,6 @@ export const boardModel = {
   pushColumnOrderIds,
   update,
   pullColumnOrderIds,
+  getBoards,
+  pushMemberIds,
 }

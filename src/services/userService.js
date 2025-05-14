@@ -6,6 +6,9 @@ import { v4 as uuidv4 } from 'uuid'
 import { pickUser } from '~/utils/formatters'
 import { WEBSITE_DOMAIN } from '~/utils/constants'
 import { BrevoProvider } from '~/providers/brevoProvider'
+import { JwtProvider } from '~/providers/jwtProvider'
+import { env } from '~/config/environment'
+import { CloudinaryProvider } from '~/providers/cloudinaryProvider'
 
 const createNew = async (reqBody) => {
   try {
@@ -48,4 +51,142 @@ const createNew = async (reqBody) => {
   }
 }
 
-export const userService = { createNew }
+const verifyAccount = async (reqBody) => {
+  try {
+    //check user
+    const existUser = await userModel.findOneByEmail(reqBody.email)
+    if (!existUser) throw new ApiError(StatusCodes.NOT_FOUND, 'Account not found!')
+
+    if (existUser.isActive)
+      throw new ApiError(StatusCodes.NOT_ACCEPTABLE, 'Your account is already active!')
+
+    if (reqBody.token !== existUser.verifyToken)
+      throw new ApiError(StatusCodes.NOT_ACCEPTABLE, 'Token is invalid!')
+
+    // moi thu ok -> update user
+    const updateData = {
+      isActive: true,
+      verifyToken: null,
+    }
+
+    const updatedUser = await userModel.update(existUser._id, updateData)
+
+    return pickUser(updatedUser)
+  } catch (error) {
+    throw error
+  }
+}
+
+const login = async (reqBody) => {
+  try {
+    //check user
+    const existUser = await userModel.findOneByEmail(reqBody.email)
+    if (!existUser) throw new ApiError(StatusCodes.NOT_FOUND, 'Account not found!')
+
+    if (!existUser.isActive)
+      throw new ApiError(StatusCodes.NOT_ACCEPTABLE, 'Your account is not active!')
+
+    if (!bcryptjs.compareSync(reqBody.password, existUser.password)) {
+      throw new ApiError(StatusCodes.NOT_ACCEPTABLE, 'Your email or password is incorrect!')
+    }
+
+    // moi thu ok -> tao Tokens dang nhap tra ve cho phia FE
+    // Tao thong tin de dinh kem trong JWT Token bao gom: _id va email user
+    const userInfo = {
+      _id: existUser._id,
+      email: existUser.email,
+    }
+
+    // Tao accessToken va refreshToken tra ve cho FE
+    const accessToken = await JwtProvider.generateToken(
+      userInfo,
+      env.ACCESS_TOKEN_SECRET_SIGNATURE,
+      env.ACCESS_TOKEN_LIFE,
+    )
+
+    const refreshToken = await JwtProvider.generateToken(
+      userInfo,
+      env.REFRESH_TOKEN_SECRET_SIGNATURE,
+      env.REFRESH_TOKEN_LIFE,
+    )
+
+    // Tra ve thong tin user kem theo 2 loai token vua tao
+    return {
+      accessToken,
+      refreshToken,
+      ...pickUser(existUser),
+    }
+  } catch (error) {
+    throw error
+  }
+}
+
+const refreshToken = async (clientRefreshToken) => {
+  try {
+    // verify refreshToken co hop le ko
+    const refreshTokenDecoded = await JwtProvider.verifyToken(
+      clientRefreshToken,
+      env.REFRESH_TOKEN_SECRET_SIGNATURE,
+    )
+
+    const userInfo = {
+      _id: refreshTokenDecoded._id,
+      email: refreshTokenDecoded.email,
+    }
+
+    // create new accessToken
+    const accessToken = await JwtProvider.generateToken(
+      userInfo,
+      env.ACCESS_TOKEN_SECRET_SIGNATURE,
+      env.ACCESS_TOKEN_LIFE,
+    )
+
+    return { accessToken }
+  } catch (error) {
+    throw error
+  }
+}
+
+const update = async (userId, reqBody, userAvatarFile) => {
+  try {
+    //check user
+    const existUser = await userModel.findOneById(userId)
+    if (!existUser) throw new ApiError(StatusCodes.NOT_FOUND, 'Account not found!')
+    if (!existUser.isActive) {
+      throw new ApiError(StatusCodes.NOT_ACCEPTABLE, 'Your account is not active!')
+    }
+
+    // Khoi tao ket qua update user
+    let updatedUser = {}
+
+    //case: change password
+    if (reqBody.current_password && reqBody.new_password) {
+      // check currentPassword
+      if (!bcryptjs.compareSync(reqBody.current_password, existUser.password)) {
+        throw new ApiError(StatusCodes.NOT_ACCEPTABLE, 'Your current password is incorrect!')
+      }
+
+      // hash new password and update
+      updatedUser = await userModel.update(userId, {
+        password: bcryptjs.hashSync(reqBody.new_password, 8),
+      })
+    } else if (userAvatarFile) {
+      // case: upload user avatar -> cloudinary
+      const uploadResult = await CloudinaryProvider.streamUpload(userAvatarFile.buffer, 'users')
+
+      // Luu lai url cua file anh vao trong DB
+      updatedUser = await userModel.update(userId, {
+        avatar: uploadResult.secure_url,
+      })
+    } else {
+      // Case update thong tin chung:  displayName
+      updatedUser = await userModel.update(userId, reqBody)
+    }
+
+    return pickUser(updatedUser)
+  } catch (error) {
+    throw error
+  }
+}
+
+export const userService = { createNew, verifyAccount, login, refreshToken, update }
